@@ -17,7 +17,7 @@ builds:
   - env:
     - CGO_ENABLED=0
     binary: '{{ .ProjectName }}'
-    main: cmd/kabarin/main.go
+    main: cmd/nwp/nwp.go
     goos:
       - linux
       - windows
@@ -35,7 +35,7 @@ builds:
       goarch: 'arm'
 
 archives:
-  - format: tar.gz
+  - formats: [ 'tar.gz' ]
     # this name template makes the OS and Arch compatible with the results of `uname`.
     name_template: >-
       {{ .ProjectName }}_
@@ -47,7 +47,7 @@ archives:
     # use zip for windows archives
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [ 'zip' ]
 
 changelog:
   sort: asc
