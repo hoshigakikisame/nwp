@@ -2,6 +2,8 @@ package utils
 
 import (
 	"bufio"
+	"crypto/sha1"
+	"math/rand"
 	"os"
 	"regexp"
 	"strings"
@@ -36,6 +38,21 @@ func ReadFile(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
+func WriteFile(filePath string, b []byte) error {
+	file, err := os.Create(filePath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	_, err = file.Write(b)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func FileExists(filename string) bool {
 	info, err := os.Stat(filename)
 	if os.IsNotExist(err) {
@@ -45,4 +62,19 @@ func FileExists(filename string) bool {
 		return false
 	}
 	return !info.IsDir()
+}
+
+func SHA256(s string) []byte {
+	h := sha1.New()
+	h.Write([]byte(s))
+	return h.Sum(nil)
+}
+
+func RandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_"
+	result := make([]byte, length)
+	for i := range result {
+		result[i] = charset[rand.Intn(len(charset))]
+	}
+	return string(result)
 }

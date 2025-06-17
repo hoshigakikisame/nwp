@@ -12,11 +12,14 @@ import (
 )
 
 type Options struct {
-	WildcardsPath  string
-	SubdomainsPath string
-	Concurrency    int
-	OutputPath     string
-	IsVerbose      bool
+	WildcardsPath             string
+	SubdomainsPath            string
+	Concurrency               int
+	IncludeNonWildcardMembers bool
+	OutputPath                string
+	IsVerbose                 bool
+	Quiet                     bool
+	CommonFingerPrintsLimit   int
 
 	Wildcards  []string
 	Subdomains []string
@@ -37,8 +40,16 @@ func init() {
 	opt.StringVarP(&o.WildcardsPath, "wildcards", "w", "", "Wildcards file path")
 	opt.StringVarP(&o.SubdomainsPath, "subdomains", "s", "", "Subdomains file path")
 
+	// Matchers
+	opt.IntVarP(&o.CommonFingerPrintsLimit, "common-fingerprints-limit", "cfl", 7, "Limit for common fingerprints to be generated")
+
+	// Output
+	opt.StringVarP(&o.OutputPath, "output", "o", "", "Output file path to save results")
+	opt.BoolVarP(&o.IncludeNonWildcardMembers, "include-non-wildcard-members", "inwm", false, "Include non-wildcard members in the output")
+
 	// Misc
 	opt.BoolVarP(&o.IsVerbose, "verbose", "v", false, "Enable verbose output")
+	opt.BoolVarP(&o.Quiet, "quiet", "q", false, "Enable quiet mode (no logging)")
 
 	_ = opt.Parse()
 }
@@ -77,6 +88,10 @@ func Parse() *Options {
 
 	if o.IsVerbose {
 		gologger.DefaultLogger.SetMaxLevel(levels.LevelVerbose)
+	}
+
+	if o.Quiet {
+		gologger.DefaultLogger.SetMaxLevel(levels.LevelSilent)
 	}
 
 	return o

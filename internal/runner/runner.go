@@ -1,8 +1,8 @@
 package runner
 
 import (
+	"bytes"
 	"fmt"
-	"math/rand"
 	"sort"
 	"strings"
 	"sync"
@@ -21,23 +21,37 @@ func New(options *Options) *runner {
 	return &runner{options: options}
 }
 
-func getFingerPrint(domain string) (int, error) {
+func getFingerPrint(domain string) ([]byte, error) {
 
 	dnsClient := dns.Client{
 		Timeout: time.Second,
 	}
 	msg := dns.Msg{}
 	msg.RecursionDesired = true
-	msg.SetQuestion(domain+".", dns.TypeA)
+	msg.SetQuestion(domain+".", dns.TypeANY)
 	res, _, err := dnsClient.Exchange(&msg, "8.8.8.8:53")
 	if err != nil {
-		return -1, err
+		return nil, fmt.Errorf("DNS query failed for %s: %w", domain, err)
 	}
 
-	return len(res.Answer), nil
+	if res.Rcode != dns.RcodeSuccess {
+		return nil, fmt.Errorf("DNS query failed for %s with Rcode: %d", domain, res.Rcode)
+	}
+
+	strAnswers := ""
+	for _, ans := range res.Answer {
+		strRecords := strings.Join(strings.Fields(ans.String())[2:], " ")
+		strAnswers += strRecords + "\n"
+	}
+
+	strHash := utils.SHA256(strAnswers)
+
+	gologger.Verbose().Msgf("Obtained fingerprint for %s: %x", domain, strHash)
+
+	return strHash, nil
 }
 
-func worker(subChan chan string, wg *sync.WaitGroup, baseFP int, commonFP int, resultChan chan<- string) {
+func worker(subChan chan string, wg *sync.WaitGroup, commonFP []byte, resultChan chan<- string) {
 	defer wg.Done()
 	for sub := range subChan {
 		subFP, err := getFingerPrint(sub)
@@ -45,84 +59,139 @@ func worker(subChan chan string, wg *sync.WaitGroup, baseFP int, commonFP int, r
 			gologger.Warning().Msgf("Unable to get %s fingerprint, continuing", sub)
 			continue
 		}
-		if subFP != baseFP && subFP != commonFP {
+
+		if !bytes.Equal(subFP, commonFP) {
+			gologger.Verbose().Msgf("Found unique subdomain: %s with fingerprint %x", sub, subFP)
 			resultChan <- sub
 		}
 	}
 }
 
-func (r *runner) Run() {
+func getCommonFingerPrints(wildcard string, limit int) (commonFP []byte, err error) {
+	for i := 0; i < limit; i++ {
+		sub := utils.RandomString(60) + "." + wildcard
+		fp, err := getFingerPrint(sub)
+		if err != nil {
+			gologger.Warning().Msgf("Unable to get %s fingerprint, reason: %s, continuing", sub, err.Error())
+			continue
+		}
 
+		if commonFP == nil {
+			commonFP = fp
+			continue
+		}
+
+		if !bytes.Equal(fp, commonFP) {
+			return nil, fmt.Errorf("inconsistent fingerprints detected for %s", wildcard)
+		}
+	}
+
+	if commonFP == nil {
+		return nil, fmt.Errorf("unable to obtain any fingerprints for %s", wildcard)
+	}
+
+	return commonFP, nil
+}
+
+func (r *runner) Run() {
 	subGroup := make(map[string][]string)
 
-	// Sort wildcards by level
-	sort.SliceStable(o.Wildcards, func(i, j int) bool {
-		return strings.Count(o.Wildcards[i], ".") > strings.Count(o.Wildcards[j], ".")
+	sort.SliceStable(r.options.Wildcards, func(i, j int) bool {
+		return strings.Count(r.options.Wildcards[i], ".") > strings.Count(r.options.Wildcards[j], ".")
 	})
 
-	// Group subdomains under their corresponding wildcard
 	gologger.Info().Msgf("Grouping subdomains")
-	for _, w := range o.Wildcards {
+	for _, w := range r.options.Wildcards {
 		suffix := "." + w
 
-		for i := 0; i < len(o.Subdomains); {
-			s := o.Subdomains[i]
-
+		for i := 0; i < len(r.options.Subdomains); {
+			s := r.options.Subdomains[i]
 			if !utils.IsValidDomain(s) {
-				o.Subdomains = append(o.Subdomains[:i], o.Subdomains[i+1:]...)
-				i++
+				r.options.Subdomains = append(r.options.Subdomains[:i], r.options.Subdomains[i+1:]...)
 				continue
 			}
-
 			if strings.HasSuffix(s, suffix) {
 				subGroup[w] = append(subGroup[w], s)
-				o.Subdomains = append(o.Subdomains[:i], o.Subdomains[i+1:]...)
+				r.options.Subdomains = append(r.options.Subdomains[:i], r.options.Subdomains[i+1:]...)
 			} else {
 				i++
 			}
 		}
 	}
 
-	validSubs := make(chan string, len(o.Subdomains))
+	validSubs := make(chan string)
+	var wg sync.WaitGroup
 
 	for wildcard, subs := range subGroup {
-
 		gologger.Info().Msgf("Eliminating invalid %s instances..", wildcard)
 
+		if len(subs) == 0 {
+			gologger.Warning().Msgf("No subdomains found for wildcard %s, skipping", wildcard)
+			continue
+		}
+
+		commonFP, err := getCommonFingerPrints(wildcard, r.options.CommonFingerPrintsLimit)
+		if err != nil {
+			gologger.Warning().Msgf("Unable to get common fingerprints for %s, continuing", wildcard)
+			continue
+		}
+
 		jobs := make(chan string)
-		var wg sync.WaitGroup
 
-		baseFP, err := getFingerPrint(wildcard)
-		if err != nil {
-			gologger.Warning().Msgf("Unable to get %s fingerprint, continuing", wildcard)
-			continue
-		}
-
-		commonFP, err := getFingerPrint(fmt.Sprintf("%d.%s", rand.Int(), wildcard))
-		if err != nil {
-			gologger.Warning().Msgf("Unable to get %s fingerprint, continuing", wildcard)
-			continue
-		}
-
-		for i := 0; i <= r.options.Concurrency; i++ {
+		for i := 0; i < r.options.Concurrency; i++ {
 			wg.Add(1)
-			go worker(jobs, &wg, baseFP, commonFP, validSubs)
+			go worker(jobs, &wg, commonFP, validSubs)
 		}
 
-		for _, sub := range subs {
-			jobs <- sub
-		}
+		go func(subs []string) {
+			for _, sub := range subs {
+				jobs <- sub
+			}
+			close(jobs)
+		}(subs)
+	}
 
-		close(jobs)
+	go func() {
 		wg.Wait()
-	}
+		close(validSubs)
+	}()
 
-	close(validSubs)
+	uniqueWildcardSubs := make([]string, 0)
+
 	for sub := range validSubs {
+		uniqueWildcardSubs = append(uniqueWildcardSubs, sub)
 		fmt.Println(sub)
 	}
 
-	for _, sub := range o.Subdomains {
-		fmt.Println(sub)
+	if r.options.IncludeNonWildcardMembers {
+		for _, sub := range r.options.Subdomains {
+			fmt.Println(sub)
+		}
 	}
+
+	if r.options.OutputPath != "" {
+		if err := r.saveResults(uniqueWildcardSubs); err != nil {
+			gologger.Error().Msgf("Error saving results: %s", err)
+		}
+	} else {
+		gologger.Info().Msgf("Results not saved, use --output to specify output file")
+	}
+}
+
+func (r *runner) saveResults(results []string) error {
+	if r.options.OutputPath == "" {
+		return nil
+	}
+
+	var output bytes.Buffer
+	for _, res := range results {
+		output.WriteString(res + "\n")
+	}
+
+	if err := utils.WriteFile(r.options.OutputPath, output.Bytes()); err != nil {
+		return fmt.Errorf("unable to save results to %s, reason: %w", r.options.OutputPath, err)
+	}
+
+	gologger.Info().Msgf("Results saved to %s", r.options.OutputPath)
+	return nil
 }
