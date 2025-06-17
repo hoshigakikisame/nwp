@@ -10,13 +10,12 @@ const (
   ___ _    _____
  / _ \ |/|/ / _ \
 /_//_/__,__/ .__/
-          /_/    
-`
+          /_/    `
 )
 
 func showBanner() {
 	gologger.Print().Msgf(`
-%snwp v%s
+%s v%s
 
 by @%s
 

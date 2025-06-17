@@ -173,8 +173,6 @@ func (r *runner) Run() {
 		if err := r.saveResults(uniqueWildcardSubs); err != nil {
 			gologger.Error().Msgf("Error saving results: %s", err)
 		}
-	} else {
-		gologger.Info().Msgf("Results not saved, use --output to specify output file")
 	}
 }
 
