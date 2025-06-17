@@ -67,6 +67,7 @@ func (o *Options) validate() error {
 	return nil
 }
 func Parse() *Options {
+	showBanner()
 
 	if err := o.validate(); err != nil {
 		gologger.Fatal().Msgf("Unable to parse option, reason: %s", err.Error())
