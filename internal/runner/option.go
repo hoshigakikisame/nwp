@@ -87,6 +87,8 @@ func Parse() *Options {
 
 	rand.NewSource(time.Now().UnixNano())
 
+	gologger.DefaultLogger.SetMaxLevel(levels.LevelWarning)
+
 	if o.IsVerbose {
 		gologger.DefaultLogger.SetMaxLevel(levels.LevelVerbose)
 	}

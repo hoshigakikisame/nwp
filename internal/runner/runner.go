@@ -101,23 +101,30 @@ func (r *runner) Run() {
 	})
 
 	gologger.Info().Msgf("Grouping subdomains")
-	for _, w := range r.options.Wildcards {
-		suffix := "." + w
+	remaining := make([]string, 0, len(r.options.Subdomains))
 
-		for i := 0; i < len(r.options.Subdomains); {
-			s := r.options.Subdomains[i]
-			if !utils.IsValidDomain(s) {
-				r.options.Subdomains = append(r.options.Subdomains[:i], r.options.Subdomains[i+1:]...)
-				continue
-			}
+	for _, s := range r.options.Subdomains {
+		if !utils.IsValidDomain(s) {
+			continue
+		}
+
+		matched := false
+		for _, w := range r.options.Wildcards {
+			suffix := "." + w
 			if strings.HasSuffix(s, suffix) {
 				subGroup[w] = append(subGroup[w], s)
-				r.options.Subdomains = append(r.options.Subdomains[:i], r.options.Subdomains[i+1:]...)
-			} else {
-				i++
+				gologger.Debug().Msgf("Subdomain %s grouped under wildcard %s", s, w)
+				matched = true
+				break
 			}
 		}
+
+		if !matched {
+			remaining = append(remaining, s)
+		}
 	}
+
+	r.options.Subdomains = remaining
 
 	validSubs := make(chan string)
 	var wg sync.WaitGroup
@@ -164,11 +171,11 @@ func (r *runner) Run() {
 	}
 
 	if r.options.IncludeNonWildcardMembers {
-		for _, sub := range r.options.Subdomains {
-			fmt.Println(sub)
-		}
+		gologger.Info().Msgf("Including non-wildcard members in the output")
+		uniqueWildcardSubs = append(uniqueWildcardSubs, r.options.Subdomains...)
 	}
 
+	gologger.Info().Msgf("Writing %d unique wildcard subdomains", len(uniqueWildcardSubs))
 	if r.options.OutputPath != "" {
 		if err := r.saveResults(uniqueWildcardSubs); err != nil {
 			gologger.Error().Msgf("Error saving results: %s", err)
@@ -186,7 +193,7 @@ func (r *runner) saveResults(results []string) error {
 		output.WriteString(res + "\n")
 	}
 
-	if err := utils.WriteFile(r.options.OutputPath, output.Bytes()); err != nil {
+	if err := utils.WriteFile(r.options.OutputPath, false, output.Bytes()); err != nil {
 		return fmt.Errorf("unable to save results to %s, reason: %w", r.options.OutputPath, err)
 	}
 

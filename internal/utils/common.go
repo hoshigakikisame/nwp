@@ -38,8 +38,17 @@ func ReadFile(filePath string) ([]string, error) {
 	return lines, scanner.Err()
 }
 
-func WriteFile(filePath string, b []byte) error {
-	file, err := os.Create(filePath)
+func WriteFile(filePath string, appendMode bool, b []byte) error {
+
+	var flag int
+
+	if appendMode {
+		flag = os.O_WRONLY | os.O_APPEND | os.O_CREATE
+	} else {
+		flag = os.O_WRONLY | os.O_CREATE | os.O_TRUNC
+	}
+
+	file, err := os.OpenFile(filePath, flag, 0644)
 	if err != nil {
 		return err
 	}
